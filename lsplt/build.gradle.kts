@@ -91,7 +91,7 @@ android {
                         "-D__FILE__=__FILE_NAME__",
                         "-Wl,--exclude-libs,ALL",
                     )
-                    cppFlags("-std=c++20", *flags)
+                    cppFlags("-std=c++17", *flags)
                     cFlags("-std=c18", *flags)
                     val configFlags = arrayOf(
                         "-Oz",

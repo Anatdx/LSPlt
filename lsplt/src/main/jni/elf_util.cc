@@ -271,7 +271,8 @@ std::vector<uintptr_t> Elf::FindPltAddr(std::string_view name) const {
     if (!idx) idx = LinearLookup(name);
     if (!idx) return res;
 
-    auto looper = [&]<typename T>(auto begin, auto size, bool is_plt) -> void {
+    auto looper = [&](auto *rel_type, auto begin, auto size, bool is_plt) -> void {
+        using T = std::remove_pointer_t<decltype(rel_type)>;
         const auto *rel_end = reinterpret_cast<const T *>(begin + size);
         for (const auto *rel = reinterpret_cast<const T *>(begin); rel < rel_end; ++rel) {
             auto r_info = rel->r_info;
@@ -295,9 +296,9 @@ std::vector<uintptr_t> Elf::FindPltAddr(std::string_view name) const {
           std::make_tuple(rel_android_, rel_android_size_, false)}) {
         if (!rel) continue;
         if (is_use_rela_) {
-            looper.template operator()<ElfW(Rela)>(rel, rel_size, is_plt);
+            looper(static_cast<ElfW(Rela) *>(nullptr), rel, rel_size, is_plt);
         } else {
-            looper.template operator()<ElfW(Rel)>(rel, rel_size, is_plt);
+            looper(static_cast<ElfW(Rel) *>(nullptr), rel, rel_size, is_plt);
         }
     }
 

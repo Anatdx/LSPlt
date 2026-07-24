@@ -248,7 +248,8 @@ std::list<RegisterInfo> register_info;
 HookInfos hook_info;
 }  // namespace
 
-namespace lsplt::inline v2 {
+namespace lsplt {
+inline namespace v2 {
 [[maybe_unused]] std::vector<MapInfo> MapInfo::Scan(std::string_view pid) {
     constexpr static auto kPermLength = 5;
     constexpr static auto kMapEntry = 7;
@@ -275,9 +276,9 @@ namespace lsplt::inline v2 {
                 continue;
             }
             while (path_off < read && isspace(line[path_off])) path_off++;
-            auto &ref = info.emplace_back(start, end, 0, perm[3] == 'p', off,
-                                          static_cast<dev_t>(makedev(dev_major, dev_minor)), inode,
-                                          line + path_off);
+            auto &ref = info.emplace_back(MapInfo{
+                start, end, 0, perm[3] == 'p', off,
+                static_cast<dev_t>(makedev(dev_major, dev_minor)), inode, line + path_off});
             if (perm[0] == 'r') ref.perms |= PROT_READ;
             if (perm[1] == 'w') ref.perms |= PROT_WRITE;
             if (perm[2] == 'x') ref.perms |= PROT_EXEC;
@@ -294,10 +295,10 @@ namespace lsplt::inline v2 {
     const std::unique_lock lock(hook_mutex);
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
     static_assert(std::numeric_limits<uintptr_t>::max() == -1);
-    [[maybe_unused]] const auto &info = register_info.emplace_back(
+    [[maybe_unused]] const auto &info = register_info.emplace_back(RegisterInfo{
         dev, inode,
         std::pair{std::numeric_limits<uintptr_t>::min(), std::numeric_limits<uintptr_t>::max()},
-        std::string{symbol}, callback, backup);
+        std::string{symbol}, callback, backup});
 
     LOGV("RegisterHook %lu %s", info.inode, info.symbol.data());
     return true;
@@ -310,8 +311,8 @@ namespace lsplt::inline v2 {
     const std::unique_lock lock(hook_mutex);
     static_assert(std::numeric_limits<uintptr_t>::min() == 0);
     static_assert(std::numeric_limits<uintptr_t>::max() == -1);
-    [[maybe_unused]] const auto &info = register_info.emplace_back(
-        dev, inode, std::pair{offset, offset + size}, std::string{symbol}, callback, backup);
+    [[maybe_unused]] const auto &info = register_info.emplace_back(RegisterInfo{
+        dev, inode, std::pair{offset, offset + size}, std::string{symbol}, callback, backup});
 
     LOGV("RegisterHook %lu %" PRIxPTR "-%" PRIxPTR " %s", info.inode, info.offset_range.first,
          info.offset_range.second, info.symbol.data());
@@ -338,4 +339,5 @@ namespace lsplt::inline v2 {
     const std::unique_lock lock(hook_mutex);
     return hook_info.InvalidateBackup();
 }
-}  // namespace lsplt::inline v2
+}  // namespace v2
+}  // namespace lsplt

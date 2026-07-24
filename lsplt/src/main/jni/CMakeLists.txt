@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(lsplt)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 find_program(CCACHE ccache)
 
 if (CCACHE)
@@ -12,8 +15,6 @@ if (LSPLT_STANDALONE)
     find_package(cxx REQUIRED CONFIG)
     link_libraries(cxx::cxx)
 endif()
-
-add_definitions(-std=c++20)
 
 set(SOURCES lsplt.cc elf_util.cc)
 
