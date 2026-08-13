@@ -34,6 +34,9 @@ struct RegisterInfo {
     void **backup;
 };
 
+std::vector<lsplt::MapInfo> map_cache;
+bool map_cache_ready = false;
+
 struct HookInfo : public lsplt::MapInfo {
     std::map<uintptr_t, uintptr_t> hooks;
     uintptr_t backup;
@@ -47,11 +50,10 @@ struct HookInfo : public lsplt::MapInfo {
 
 class HookInfos : public std::map<uintptr_t, HookInfo, std::greater<>> {
 public:
-    static auto ScanHookInfo() {
+    static auto FromMaps(std::vector<lsplt::MapInfo> maps) {
         static ino_t kSelfInode = 0;
         static dev_t kSelfDev = 0;
         HookInfos info;
-        auto maps = lsplt::MapInfo::Scan();
         if (kSelfInode == 0) {
             auto self = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
             for (auto &map : maps) {
@@ -190,25 +192,30 @@ public:
 
     bool DoHook(std::list<RegisterInfo> &register_info) {
         bool res = true;
-        for (auto info_iter = rbegin(); info_iter != rend(); ++info_iter) {
-            auto &info = info_iter->second;
-            for (auto iter = register_info.begin(); iter != register_info.end();) {
-                const auto &reg = *iter;
+        for (auto iter = register_info.begin(); iter != register_info.end();) {
+            const auto &reg = *iter;
+            bool found = false;
+            bool committed = true;
+            for (auto info_iter = rbegin(); info_iter != rend(); ++info_iter) {
+                auto &info = info_iter->second;
                 if (info.offset != iter->offset_range.first || !info.Match(reg)) {
-                    ++iter;
                     continue;
                 }
                 if (!info.elf) info.elf = std::make_unique<Elf>(info.start);
                 if (info.elf && info.elf->Valid()) {
                     LOGD("Hooking %s", iter->symbol.data());
-                    for (auto addr : info.elf->FindPltAddr(reg.symbol)) {
-                        res = DoHook(addr, reinterpret_cast<uintptr_t>(reg.callback),
-                                     reinterpret_cast<uintptr_t *>(reg.backup)) &&
-                              res;
+                    const auto addresses = info.elf->FindPltAddr(reg.symbol);
+                    for (auto addr : addresses) {
+                        found = true;
+                        committed =
+                            DoHook(addr, reinterpret_cast<uintptr_t>(reg.callback),
+                                   reinterpret_cast<uintptr_t *>(reg.backup)) &&
+                            committed;
                     }
                 }
-                iter = register_info.erase(iter);
             }
+            res = found && committed && res;
+            iter = register_info.erase(iter);
         }
         return res;
     }
@@ -246,6 +253,17 @@ public:
 std::mutex hook_mutex;
 std::list<RegisterInfo> register_info;
 HookInfos hook_info;
+
+HookInfos FreshHookInfo() {
+    map_cache = lsplt::MapInfo::Scan();
+    map_cache_ready = true;
+    return HookInfos::FromMaps(map_cache);
+}
+
+HookInfos CachedHookInfo() {
+    if (!map_cache_ready) return {};
+    return HookInfos::FromMaps(map_cache);
+}
 }  // namespace
 
 namespace lsplt {
@@ -288,6 +306,11 @@ inline namespace v2 {
     return info;
 }
 
+[[maybe_unused]] std::vector<MapInfo> MapInfo::ScanCached() {
+    const std::unique_lock lock(hook_mutex);
+    return map_cache_ready ? map_cache : std::vector<MapInfo>{};
+}
+
 [[maybe_unused]] bool RegisterHook(dev_t dev, ino_t inode, std::string_view symbol, void *callback,
                                    void **backup) {
     if (dev == 0 || inode == 0 || symbol.empty() || !callback) return false;
@@ -323,7 +346,7 @@ inline namespace v2 {
     const std::unique_lock lock(hook_mutex);
     if (register_info.empty()) return true;
 
-    auto new_hook_info = HookInfos::ScanHookInfo();
+    auto new_hook_info = FreshHookInfo();
     if (new_hook_info.empty()) return false;
 
     new_hook_info.Filter(register_info);
@@ -332,6 +355,17 @@ inline namespace v2 {
     // update to new map info
     hook_info = std::move(new_hook_info);
 
+    return hook_info.DoHook(register_info);
+}
+
+[[maybe_unused]] bool CommitHookCached() {
+    const std::unique_lock lock(hook_mutex);
+    if (register_info.empty()) return true;
+    auto new_hook_info = CachedHookInfo();
+    if (new_hook_info.empty()) return false;
+    new_hook_info.Filter(register_info);
+    new_hook_info.Merge(hook_info);
+    hook_info = std::move(new_hook_info);
     return hook_info.DoHook(register_info);
 }
 

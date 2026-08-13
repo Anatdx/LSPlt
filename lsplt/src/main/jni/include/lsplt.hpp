@@ -41,6 +41,10 @@ struct MapInfo {
     /// \param[in] pid The process id to scan. This is "self" by default.
     /// \return A list of \ref MapInfo entries.
     [[maybe_unused, gnu::visibility("default")]] static std::vector<MapInfo> Scan(std::string_view pid = "self");
+
+    /// \brief Returns the latest map snapshot captured by #CommitHook().
+    /// The snapshot is inherited across fork and does not access procfs.
+    [[maybe_unused, gnu::visibility("default")]] static std::vector<MapInfo> ScanCached();
 };
 
 /// \brief Register a hook to a function by inode. For so within an archive, you should use
@@ -112,6 +116,13 @@ struct MapInfo {
 /// determine which hook fails by checking the backup function pointer of #RegisterHook().
 /// \see #RegisterHook()
 [[maybe_unused, gnu::visibility("default")]] bool CommitHook();
+
+/// \brief Commit registered hooks using the map state cached by an earlier
+/// #CommitHook() call without rescanning /proc/self/maps.
+/// \return Whether every registered hook was found and committed.
+/// \note This function is intended for a fork child whose mappings still
+/// match the state inherited from its parent.
+[[maybe_unused, gnu::visibility("default")]] bool CommitHookCached();
 
 /// \brief Invalidate backup memory regions
 /// Normally LSPlt will backup the hooked memory region and do hook on a copied anonymous memory
