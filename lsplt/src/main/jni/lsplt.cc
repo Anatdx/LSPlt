@@ -5,7 +5,6 @@
 
 #include <array>
 #include <cinttypes>
-#include <list>
 #include <map>
 #include <mutex>
 #include <vector>
@@ -82,7 +81,7 @@ public:
     }
 
     // filter out ignored
-    void Filter(const std::list<RegisterInfo> &register_info) {
+    void Filter(const std::vector<RegisterInfo> &register_info) {
         for (auto iter = begin(); iter != end();) {
             const auto &info = iter->second;
             bool matched = false;
@@ -190,20 +189,28 @@ public:
         return true;
     }
 
-    bool DoHook(std::list<RegisterInfo> &register_info) {
+    bool DoHook(std::vector<RegisterInfo> &register_info) {
         bool res = true;
-        for (auto iter = register_info.begin(); iter != register_info.end();) {
-            const auto &reg = *iter;
+        // Consume front-to-back, dropping each entry only once it is done. This is
+        // not the tidiest loop, but it is exactly what the std::list version did,
+        // including when something throws partway through: only the unprocessed
+        // tail is left behind. Clearing at the end instead would leave already
+        // hooked entries queued, and re-hooking an address is read as a toggle by
+        // DoHook(addr, ...) below -- it drops the hook record and mremaps the
+        // original page back, silently undoing the hook. erase() keeps the
+        // capacity, so the steady state is still allocation-free.
+        while (!register_info.empty()) {
+            const auto &reg = register_info.front();
             bool found = false;
             bool committed = true;
             for (auto info_iter = rbegin(); info_iter != rend(); ++info_iter) {
                 auto &info = info_iter->second;
-                if (info.offset != iter->offset_range.first || !info.Match(reg)) {
+                if (info.offset != reg.offset_range.first || !info.Match(reg)) {
                     continue;
                 }
                 if (!info.elf) info.elf = std::make_unique<Elf>(info.start);
                 if (info.elf && info.elf->Valid()) {
-                    LOGD("Hooking %s", iter->symbol.data());
+                    LOGD("Hooking %s", reg.symbol.data());
                     const auto addresses = info.elf->FindPltAddr(reg.symbol);
                     for (auto addr : addresses) {
                         found = true;
@@ -215,7 +222,7 @@ public:
                 }
             }
             res = found && committed && res;
-            iter = register_info.erase(iter);
+            register_info.erase(register_info.begin());
         }
         return res;
     }
@@ -251,7 +258,13 @@ public:
 };
 
 std::mutex hook_mutex;
-std::list<RegisterInfo> register_info;
+// Staging buffer for pending hooks, drained by every CommitHook. It holds one or
+// two entries in practice, so contiguity is not the point -- capacity survival is:
+// erasing does not release the buffer, so after the first commit in a process every
+// later register/commit cycle allocates nothing. The std::list it replaced malloc'd
+// a node per registration and freed it per commit, forever, on a path that runs in
+// each forked app process.
+std::vector<RegisterInfo> register_info;
 HookInfos hook_info;
 
 HookInfos FreshHookInfo() {
